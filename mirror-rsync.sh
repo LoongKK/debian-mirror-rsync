@@ -10,25 +10,28 @@ set -euo pipefail;
 usage()
 {
   echo "Simple APT mirror script using rsync and *nix tools, intended to be run via cron";
-  echo "Usage: $0 [-h] [-p]";
+  echo "Usage: $0 [-h] [-p | -P]";
   echo "Options:";
   echo "	-h		Display this help message"
-  echo "	-p		Display progress from the package sync (for interactive use)";
+  echo "	-p		Shows overall transfer progress instead of per-file stats — useful for large batches of files.";
+  echo "	-P		Displays progress for each file being transferred, including bytes copied, percentage complete, speed, and ETA";
   exit;
 }
-
 syncDate=$(date +%F);
 
 #Adapt as necessary to your package mirror setup
-sourceFolder='/etc/mirror-rsync.d';
-baseDirectory="/srv/apt";
+sourceFolder='/data/mirror-rsync/mirror-rsync.d';#改成当前目录
+baseDirectory="/data/mirror-rsync-data";#改目标目录
 
 progress='';
 #Add a progress option
-while getopts "ph" option; do
+while getopts "pPh" option; do
   case "${option}" in
     p)
       progress='--info=progress2'
+      ;;
+    P)
+      progress='--progress'
       ;;
     h)
       usage
@@ -47,7 +50,7 @@ if [[ ! -d "$sourceFolder" ]]; then
 elif [[ $(ls -1 "$sourceFolder"/* | wc -l) -eq 0 ]]; then
     echo "No master source file(s) found in $sourceFolder, create one and add name, releases, repositories and architectures per README." 1>&2;
     exit 1;
-elif [[ ! $(which rsync) ]] || [[ ! $(which sed) ]] || [[ ! $(which awk) ]]; then
+elif [[ ! $(which bash) ]] || [[ ! $(which rsync) ]] || [[ ! $(which sed) ]] || [[ ! $(which awk) ]]; then
 	echo "Missing one or more of required tools 'rsync', 'sed' and 'awk' (or they are not in the PATH for this user)." 1>&2;
 	exit 1;
 elif [[ ! $(which gunzip) ]] && [[ ! $(which xzcat) ]]; then
@@ -82,43 +85,43 @@ do
 	localPackageStore="$baseDirectory/$masterSource/$name";
 	mkdir -p "$localPackageStore/dists"
 
-	echo -n ${releases[*]} | sed 's/ /\n/g' | rsync --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
+	#echo -n ${releases[*]} | sed 's/ /\n/g' | rsync --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
+	echo -n ${releases[*]} | sed 's/ /\n/g' | rsync $progress --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
 
 	echo "$(date +%T) Generating package list";
 	#rather than hard-coding, use a config file to run the loop. The same config file as used above to sync the releases
 	for release in ${releases[*]}; do
 		for repo in ${repositories[*]}; do
 			for arch in ${architectures[*]}; do
-				pathPackages="$localPackageStore/dists/$release/$repo/binary-$arch/Packages";
-				if [[ ! -f "$pathPackages" ]]; then  #uncompressed file not found
-					if [[ $(which gunzip) ]]; then #See issue #5 - some distros don't provide gunzip by default but have xz
-					  if [[ -f "$pathPackages.gz" ]]; then
-							packageArchive="$pathPackages.gz";
-							echo "$(date +%T) Extracting $release $repo $arch Packages file from archive $packageArchive";
-							if [[ -L "$packageArchive" ]]; then #Some distros (e.g. Debian) make Packages.gz a symlink to a hashed filename. NB. it is relative to the binary-$arch folder
-								echo "$(date +%T) Archive is a symlink, resolving";
-								packageArchive=$(readlink $packageArchive | sed --expression "s_^_${packageArchive}_" --expression 's/Packages\.gz//');
-							fi
-							gunzip <"$packageArchive" >"$pathPackages";
+				packagesPath="$localPackageStore/dists/$release/$repo/binary-$arch/Packages"
+				if [[ ! -f "$packagesPath" ]]; then
+						gotPackages=0
+						for ext in gz xz; do
+								packageArchive="$packagesPath.$ext"
+								[[ -f "$packageArchive" ]] || continue
+								case $ext in
+										gz) if [[ ! $(which gunzip) ]]; then continue; fi
+											decompress="gunzip" ;;
+										xz) if [[ ! $(which xzcat) ]]; then continue; fi
+											decompress="xzcat" ;;
+								esac
+								echo "$(date +%T) Extracting $release $repo $arch Packages file from archive $packageArchive"
+								if [[ -L "$packageArchive" ]]; then
+										linkTarget=$(readlink "$packageArchive")
+										if [[ "$linkTarget" = /* ]]; then packageArchive="$linkTarget"
+										else packageArchive="$(dirname "$packageArchive")/$linkTarget"; fi
+								fi
+								"$decompress" <"$packageArchive" >"$packagesPath"
+								gotPackages=1
+								break
+						done
+						if [[ $gotPackages -eq 0 && ! -f "$packagesPath" ]]; then
+								echo "$(date +%T) Warning: no Packages, Packages.gz or Packages.xz for $release $repo $arch (or the needed decompressor is not installed), skipping" 1>&2
 						fi
-					elif [[ $(which xzcat) ]]; then
-						if [[ -f "$pathPackages.xz" ]]; then
-							packageArchive="$pathPackages.xz";
-							echo "$(date +%T) Extracting $release $repo $arch Packages file from archive $packageArchive";
-							if [[ -L "$packageArchive" ]]; then #Same as above
-								echo "$(date +%T) Archive is a symlink, resolving";
-								packageArchive=$(readlink $packageArchive | sed --expression "s_^_${packageArchive}_" --expression 's/Packages\.xz//');
-							fi
-							xzcat <"$packageArchive" >"$pathPackages";
-						fi
-					else
-						echo "$(date +%T) Error: uncompressed package list not found in remote repo and decompression tools for .gz or .xz files not found on this system, aborting. Please install either gunzip or xzcat to use this script." 1>&2;
-						exit 1;
-					fi
 				fi
 				echo "$(date +%T) Extracting packages from $release $repo $arch";
-				if [[ -s "$pathPackages" ]]; then #Have experienced zero filesizes for certain repos
-					awk '/^Filename: / { print $2; }' "$pathPackages" >> "/tmp/$filename";
+				if [[ -s "$packagesPath" ]]; then #Have experienced zero filesizes for certain repos
+					awk '/^Filename: / { print $2; }' "$packagesPath" >> "/tmp/$filename";
 				else
 					echo "$(date +%T) Package list is empty, skipping";
 				fi
@@ -128,7 +131,8 @@ do
 
 	echo "$(date +%T) Deduplicating";
 
-	sort --unique "/tmp/$filename" > "/tmp/$filename.sorted";
+	#sort --unique "/tmp/$filename" > "/tmp/$filename.sorted";
+	sort -u "/tmp/$filename" > "/tmp/$filename.sorted";#用的busybox中的sort 只有-u 这样兼容更好
 	rm -v "/tmp/$filename";
 	mv -v "/tmp/$filename.sorted" "/tmp/$filename";
 
@@ -144,7 +148,9 @@ do
 	while [[ $exitCode -gt 0 ]] && [[ $attempt -lt 4 ]];
 	do
 		SECONDS=0;
-		rsync $progress --copy-links --files-from="/tmp/$filename" --no-motd --delete-during --archive --recursive --human-readable $masterSource::$name "$localPackageStore/" 2>&1;
+		#rsync --copy-links --files-from="/tmp/$filename" --no-motd --delete-during --archive --recursive --human-readable $masterSource::$name "$localPackageStore/" 2>&1;
+		#rsync --progress --copy-links --files-from="/tmp/$filename" --delete-during --archive --recursive --human-readable $masterSource::$name "$localPackageStore/" 2>&1;
+		rsync $progress  --files-from="/tmp/$filename" --delete-during --archive --recursive --human-readable $masterSource::$name "$localPackageStore/" 2>&1;
 		exitCode=$?;
 		if [[ $exitCode -gt 0 ]]; then
 			waitTime=$((attempt*300)); #increasing wait time - 5, 10 and 15 minutes between attempts
@@ -164,10 +170,10 @@ do
 
 	echo "$(date +%T) Sync from $masterSource complete, runtime: $SECONDS s";
 
-	echo "$(date +%T) Deleting obsolete packages";
+#	echo "$(date +%T) Deleting obsolete packages";
 
 	#Build a list of files that have been synced and delete any that are not in the list
-	find "$localPackageStore/pool/" -type f | { grep -Fvf "/tmp/$filename" || true; } | xargs --no-run-if-empty -I {} rm -v {}; # '|| true' used here to prevent grep causing pipefail if there are no packages to delete - grep normally returns 1 if no files are found
+#	find "$localPackageStore/pool/" -type f | { grep -Fvf "/tmp/$filename" || true; } | xargs --no-run-if-empty -I {} rm -v {}; # '|| true' used here to prevent grep causing pipefail if there are no packages to delete - grep normally returns 1 if no files are found
 
 	echo "$(date +%T) Completed $masterSource";
 
