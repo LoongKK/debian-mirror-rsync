@@ -1,0 +1,6 @@
+#This file is dot-sourced so use bash syntax!
+name='debian'
+#releases=('bullseye' 'bullseye-updates' 'bookworm' 'bookworm-updates' 'bookworm-backports')
+releases=('bookworm' 'bookworm-updates' 'bookworm-backports' 'trixie' 'trixie-updates' 'trixie-backports')
+repositories=('main' 'contrib' 'non-free' 'non-free-firmware')
+architectures=('i386' 'amd64')
