@@ -1,5 +1,7 @@
 # debian-mirror-rsync（mirror-rsync for debian）
 > While the original **mirror-rsync** project is excellent, it appears tailored for Ubuntu repos. Since I encountered errors mirroring Debian repos, debian-mirror-rsync introduces fixes to accommodate these differences
+>
+> Below is the original text from the original project's README.
 
 A simple APT archive mirroring script using rsync, configurable to specific releases
 
