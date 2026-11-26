@@ -81,8 +81,10 @@ do
 		rm -v "/tmp/$filename";
 	fi
 
-	echo "$(date +%T) Syncing releases";
 	localPackageStore="$baseDirectory/$masterSource/$name";
+	
+	echo "$(date +%T) Syncing releases";
+	mkdir -p "$localPackageStore/zzz-dists"
 	mkdir -p "$localPackageStore/dists"
 
 	#echo -n ${releases[*]} | sed 's/ /\n/g' | rsync --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
@@ -98,13 +100,20 @@ do
                                                                                                                                                                                                   
     for release in "${releases[@]}";do                                                                                                                                                            
             echo "$(date +%T) Syncing releases:$release";
-			rsync $progress --delete-during --archive --recursive --human-readable \
+
+			#zzz-dists
+			#同步dists时--copy-links是可以将dists中软链接的zzz-dists的文件直接同步下来 不过 debian-security/dists/bookworm-security/updates -> . 软链接到本文件夹 造成一层一层一直同步。所以还是单独同步zzz-dists,同步dists时--archive选项会保持软链接
+			rsync $progress --no-motd --delete-during --archive --recursive --human-readable \
+			$masterSource::"$name/zzz-dists/$release/" "$localPackageStore/zzz-dists/$release/" ;   
+
+			#dists
+			rsync $progress --no-motd --delete-during --archive --recursive --human-readable \
 			$IncludeBinary --exclude='binary-*' \
 			$IncludeInstaller --exclude='installer-*' \
 			$IncludeContents --exclude='Contents-*' \
 			--exclude='debian-installer/' --exclude='source/' \
 			$masterSource::"$name/dists/$release/" "$localPackageStore/dists/$release/" ;                                                                                                         
-    done  
+    done 
 		
 	echo "$(date +%T) Generating package list";
 	#rather than hard-coding, use a config file to run the loop. The same config file as used above to sync the releases
