@@ -86,8 +86,26 @@ do
 	mkdir -p "$localPackageStore/dists"
 
 	#echo -n ${releases[*]} | sed 's/ /\n/g' | rsync --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
-	echo -n ${releases[*]} | sed 's/ /\n/g' | rsync $progress --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
-
+	#echo -n ${releases[*]} | sed 's/ /\n/g' | rsync $progress --no-motd --delete-during --archive --recursive --human-readable --files-from=- $masterSource::"$name/dists/" "$localPackageStore/dists/";
+    IncludeBinary="--include=binary-all/"                                                                                                                                                                              
+    IncludeInstaller=""                                                                                                                                                                           
+    IncludeContents="--include=Contents-all*/"                                                                                                                                                                            
+    for arch in ${architectures[*]}; do                                                                                                                                                           
+            IncludeBinary="$IncludeBinary --include=binary-$arch/"                                                                                                                                
+            IncludeInstaller="$IncludeInstaller --include=installer-$arch/"                                                                                                                       
+            IncludeContents="$IncludeContents --include=Contents-$arch*/"                                                                                                                          
+    done                                                                                                                                                                                          
+                                                                                                                                                                                                  
+    for release in "${releases[@]}";do                                                                                                                                                            
+            echo "$(date +%T) Syncing releases:$release";
+			rsync $progress --delete-during --archive --recursive --human-readable \
+			$IncludeBinary --exclude='binary-*' \
+			$IncludeInstaller --exclude='installer-*' \
+			$IncludeContents --exclude='Contents-*' \
+			--exclude='debian-installer/' --exclude='source/' \
+			$masterSource::"$name/dists/$release/" "$localPackageStore/dists/$release/" ;                                                                                                         
+    done  
+		
 	echo "$(date +%T) Generating package list";
 	#rather than hard-coding, use a config file to run the loop. The same config file as used above to sync the releases
 	for release in ${releases[*]}; do
